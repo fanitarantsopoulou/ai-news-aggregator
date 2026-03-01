@@ -8,7 +8,7 @@
 
 A full-stack **Retrieval-Augmented Generation (RAG)** application that fetches real-time tech news, indexes article chunks into a vector database, and serves concise, AI-generated summaries with source attribution.
 
-
+<img width="1871" height="818" alt="Screenshot 2026-03-01 at 10 53 53 PM" src="https://github.com/user-attachments/assets/857157a9-169f-4231-965a-2785463b1d45" />
 
 ## ✨ Features
 - **Live Data Ingestion:** Fetches the latest articles via NewsAPI based on user queries.
