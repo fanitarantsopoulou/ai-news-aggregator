@@ -22,10 +22,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_openai import OpenAIEmbeddings, ChatOpenAI
+from langchain_ollama import ChatOllama, OllamaEmbeddings
 from langchain_chroma import Chroma
 from langchain.schema import Document
 from langchain.prompts import ChatPromptTemplate
+
+import requests
 
 load_dotenv()  # picks up .env file if present
 
@@ -68,68 +70,38 @@ SUMMARY_PROMPT = ChatPromptTemplate.from_messages([
     ),
 ])
 
-# ---------------------------------------------------------------------------
-# Mock news source  (identical contract to Phase 1 — swap for real API later)
-# ---------------------------------------------------------------------------
+NEWS_API_KEY: str = os.environ.get("NEWS_API_KEY", "")
+NEWSAPI_URL: str = "https://newsapi.org/v2/everything"
+
 def fetch_daily_news(topic: str) -> list[dict[str, str]]:
+    if not NEWS_API_KEY:
+        raise RuntimeError("NEWS_API_KEY is not set.")
+
+    response = requests.get(NEWSAPI_URL, params={
+        "q": topic,
+        "language": "en",
+        "sortBy": "publishedAt",
+        "pageSize": 5,
+        "apiKey": NEWS_API_KEY,
+    })
+    response.raise_for_status()
+    articles = response.json().get("articles", [])
+
+    if not articles:
+        raise HTTPException(status_code=404, detail=f"No news found for topic: {topic}")
+
     return [
         {
-            "title": f"{topic} — Terahertz Spectrum Trials Hit 1 Tbps Milestone",
-            "url": f"https://techcrunch.example.com/{topic.replace(' ', '-')}-tbps-milestone",
+            "title": a.get("title", "No title"),
+            "url": a.get("url", ""),
             "content": (
-                f"Researchers at the Global Wireless Institute announced this week that "
-                f"laboratory trials for {topic} networks have surpassed the 1 Tbps threshold "
-                f"for the first time using sub-terahertz spectrum bands between 100 GHz and "
-                f"300 GHz. The experiment used a 1024-element massive MIMO antenna array paired "
-                f"with AI-driven beamforming. Adaptive phase-coherence compensation eliminated "
-                f"atmospheric absorption losses that previously capped speeds at ~400 Gbps. "
-                f"Outdoor pilots are expected in Tokyo and Helsinki by Q3 2026."
+                f"{a.get('title', '')}. "
+                f"{a.get('description', '')} "
+                f"{a.get('content', '')}"
             ),
-        },
-        {
-            "title": f"{topic} Standard Freeze: 3GPP Release 21 Roadmap Leaked",
-            "url": f"https://lightreading.example.com/3gpp-release-21-{topic.lower().replace(' ', '-')}",
-            "content": (
-                f"A 3GPP working-group document reveals Release 21—the {topic} baseline—targets "
-                f"a Stage 3 Freeze in late 2029. Key features include AI/ML layer-2 scheduling, "
-                f"ISAC waveforms, NTN multi-orbit handover, and the NR-X air interface above "
-                f"100 GHz. Latency targets are sub-100 microseconds for URLLC slices—10x tighter "
-                f"than 5G NR. Qualcomm and Ericsson have filed over 1,200 essential patent claims."
-            ),
-        },
-        {
-            "title": f"AI-Native {topic}: How On-Device Intelligence Changes Radio Access",
-            "url": f"https://ieee.example.com/spectrum/{topic.replace(' ', '')}-ai-native-ran",
-            "content": (
-                f"{topic} embeds ML directly into the RAN stack. A joint MIT/Samsung paper "
-                f"proposes a RL scheduler operating at the physical layer with a 3 ms lookahead "
-                f"window. In urban canyon simulations it reduced packet retransmissions by 38% "
-                f"and improved spectral efficiency by 2.4 bps/Hz. The neural net runs on a "
-                f"dedicated NPU consuming under 800 mW."
-            ),
-        },
-        {
-            "title": f"{topic} and the Environment: Energy Per Bit Targets Revisited",
-            "url": f"https://greennetworks.example.com/{topic.lower().replace(' ', '-')}-sustainability",
-            "content": (
-                f"The GSMA Net Zero 2050 pledge targets 1 picojoule/bit at the {topic} access "
-                f"node—100x better than today's 5G base stations. Liquid-cooled mMIMO panels, "
-                f"GaN amplifiers at 70% efficiency, and dynamic spectrum sharing with Wi-Fi 8 "
-                f"could cut idle-mode power by 45%. Mandatory EU energy-efficiency labelling "
-                f"for {topic} base stations may follow from 2030."
-            ),
-        },
-        {
-            "title": f"Spectrum Wars: Who Owns the {topic} Frontier Bands?",
-            "url": f"https://policy.example.com/spectrum-{topic.lower().replace(' ', '-')}",
-            "content": (
-                f"WRC-27 will vote on {topic} candidate bands above 92 GHz. The US/Japan bloc "
-                f"favours shared-access D-band (130–174.8 GHz); China/EU prefer exclusive "
-                f"licensed blocks. Satellite operators are lobbying to protect Ka/V-band from "
-                f"adjacent {topic} uplink interference. A fragmented spectrum map could delay "
-                f"roaming agreements by 5+ years."
-            ),
-        },
+        }
+        for a in articles
+        if a.get("title") and a.get("url")
     ]
 
 
@@ -137,10 +109,8 @@ def fetch_daily_news(topic: str) -> list[dict[str, str]]:
 # Vector store — built lazily, cached per process lifetime
 # ---------------------------------------------------------------------------
 @lru_cache(maxsize=None)
-def _get_embeddings() -> OpenAIEmbeddings:
-    if not OPENAI_API_KEY:
-        raise RuntimeError("OPENAI_API_KEY is not set.")
-    return OpenAIEmbeddings(model=EMBEDDING_MODEL, openai_api_key=OPENAI_API_KEY)
+def _get_embeddings() -> OllamaEmbeddings:
+    return OllamaEmbeddings(model="nomic-embed-text")
 
 
 def ingest_and_get_store(topic: str) -> Chroma:
@@ -233,9 +203,6 @@ async def get_summary(
     Retrieve relevant chunks from ChromaDB for `topic`, pass them to GPT-4o-mini
     via a structured prompt, and return a 3-sentence summary with source links.
     """
-    if not OPENAI_API_KEY:
-        raise HTTPException(status_code=500, detail="OPENAI_API_KEY is not configured on the server.")
-
     log.info("Summary requested for topic: '%s'", topic)
 
     try:
@@ -259,10 +226,9 @@ async def get_summary(
                 sources.append({"title": doc.metadata.get("title", url), "url": url})
 
         # 4. Call the LLM
-        llm = ChatOpenAI(
-            model=CHAT_MODEL,
-            temperature=0.3,        # low temp → factual, reproducible
-            openai_api_key=OPENAI_API_KEY,
+        llm = ChatOllama(
+            model="llama3.1",
+            temperature=0.3,
         )
         chain = SUMMARY_PROMPT | llm
         response = await chain.ainvoke({"topic": topic, "context": context})

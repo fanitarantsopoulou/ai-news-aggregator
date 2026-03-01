@@ -6,3 +6,4 @@ openai
 fastapi
 uvicorn
 python-dotenv
+longchain-ollama

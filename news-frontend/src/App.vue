@@ -132,9 +132,8 @@
 
       <!-- ── Footer ── -->
       <footer class="footer">
-        <span>Powered by LangChain + ChromaDB + OpenAI</span>
+        <span>Powered by LangChain + ChromaDB</span>
         <span class="footer-sep">·</span>
-        <span>FastAPI backend on :8000</span>
       </footer>
     </div>
   </div>
